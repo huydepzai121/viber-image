@@ -30,6 +30,17 @@ Trình duyệt gửi yêu cầu tới server cục bộ (`POST /api/generate`), 
 
 Chỉ cần nhập địa chỉ gốc, ví dụ `https://bedrock.viber.vn`. Ứng dụng tự thêm `/v1/images/generations`. Dấu `/` ở cuối và đuôi `/v1/images/generations` (nếu bạn dán cả đường dẫn đầy đủ) được tự động loại bỏ để không bị lặp. Để trống sẽ dùng mặc định `https://bedrock.viber.vn`. Endpoint đầy đủ hiển thị ngay dưới ô nhập.
 
+### Chỉnh sửa ảnh và ảnh tham chiếu
+
+- **Chỉnh sửa**: bấm (hoặc Enter/Space) vào một ảnh kết quả để mở hộp thoại "Chỉnh sửa ảnh", nhập "Mô tả chỉnh sửa" rồi bấm "Chỉnh sửa". Server chuyển yêu cầu tới `POST /v1/images/edits` (multipart) bằng `POST /api/edit`. Có thể đính thêm tối đa 3 ảnh tham chiếu ngay trong hộp thoại.
+- **Ảnh tham chiếu khi tạo**: dưới ô prompt, "Đính kèm ảnh" (chọn file, kéo thả vào thẻ prompt hoặc dán từ clipboard). Tối đa 4 ảnh PNG/JPEG/WEBP, mỗi ảnh ≤ 20 MB, tổng dung lượng giới hạn bởi request 30 MB (ảnh được mã hoá base64 nên tối đa khoảng 21 MB ảnh gốc). Có ảnh đính kèm thì "Tạo ảnh" gọi `/api/edit` (n > 1 vẫn được chia thành n request song song); ảnh đính kèm bị xoá sau khi thành công và được giữ lại nếu lỗi.
+- Upstream gửi nhiều ảnh qua field lặp `image[]`; server luôn dùng `image[]`.
+- Kết quả nằm trong một **feed theo phiên** (mới nhất ở trên) chỉ giữ trong bộ nhớ trang, không lưu vào localStorage hay server; nút "Xoá tất cả" giải phóng bộ nhớ.
+
+### Tiến độ ước tính
+
+Upstream không trả tiến độ thật, nên phần trăm trên khung chờ chỉ là **ước lượng theo thời gian**: tăng dần và tiến về 95% trong khoảng thời gian dự kiến (60 giây khi tạo thường, 70 giây khi chỉnh sửa hoặc dùng tới 2 ảnh tham chiếu, cộng 15 giây cho mỗi ảnh thêm), không bao giờ chạm 100% trước khi có phản hồi, rồi hiện 100% ngắn trước khi thay bằng ảnh. Khi hệ điều hành bật "giảm chuyển động", các chấm không chuyển động nhưng phần trăm vẫn cập nhật.
+
 ### Tên file tải về
 
 - Một ảnh: `img_YYYYMMDD_HHMMSS.png`
@@ -42,7 +53,7 @@ Chỉ cần nhập địa chỉ gốc, ví dụ `https://bedrock.viber.vn`. Ứn
 - **Không thu thập, không lưu, không ghi log.** Server chỉ chuyển tiếp API key, Base URL và prompt tới API bạn chỉ định rồi quên ngay: không ghi file, không ghi log, không đưa chúng vào thông báo lỗi (URL và key bị che trong lỗi 502). Log duy nhất là dòng khởi động `Viber Image Studio: http://host:port`.
 - **API key chỉ lưu trên trình duyệt khi bạn đồng ý.** Ô "Ghi nhớ API key trên trình duyệt này" mặc định tắt: key chỉ nằm trong bộ nhớ của tab và mất khi tải lại trang; key đã lưu trước đó bị xoá khỏi `localStorage`. Khi bật, key được lưu trong `localStorage` (khóa `viber-image-settings`) của chính trình duyệt đó; bỏ chọn sẽ xoá lại. Base URL, model, prompt, kích thước và số ảnh vẫn được nhớ. Mọi script cùng origin đọc được `localStorage`, nên chỉ bật tuỳ chọn này trên máy tin cậy.
 - **Header bảo mật** trên mọi response: `Content-Security-Policy` chặt (chỉ script/connect cùng origin, không inline script/style), `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`; các endpoint `/api/*` có thêm `Cache-Control: no-store`.
-- **Chống biến server thành open proxy (SSRF).** `/api/generate` và `/api/fetch-image` chỉ nhận `http`/`https`, từ chối URL có `user:pass@`, phân giải tên miền và từ chối địa chỉ loopback, mạng riêng (10/8, 172.16/12, 192.168/16), link-local (169.254/16, gồm metadata của cloud), CGNAT (100.64/10), `0.0.0.0/8`, multicast, IPv6 `::1`, `fc00::/7`, `fe80::/10` và dạng IPv4-mapped tương ứng (HTTP 400). Không theo redirect của upstream (3xx bị coi là lỗi). `/api/fetch-image` giới hạn 50 MB mỗi ảnh.
+- **Chống biến server thành open proxy (SSRF).** `/api/generate`, `/api/edit` và `/api/fetch-image` chỉ nhận `http`/`https`, từ chối URL có `user:pass@`, phân giải tên miền và từ chối địa chỉ loopback, mạng riêng (10/8, 172.16/12, 192.168/16), link-local (169.254/16, gồm metadata của cloud), CGNAT (100.64/10), `0.0.0.0/8`, multicast, IPv6 `::1`, `fc00::/7`, `fe80::/10` và dạng IPv4-mapped tương ứng (HTTP 400). Không theo redirect của upstream (3xx bị coi là lỗi). `/api/fetch-image` giới hạn 50 MB mỗi ảnh.
 
 ### Triển khai công khai
 

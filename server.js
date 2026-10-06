@@ -7,11 +7,20 @@ import { Readable } from 'node:stream';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { buildEndpoint, buildUpstreamBody } from './public/lib.js';
+import {
+  DEFAULT_MODEL,
+  buildEditEndpoint,
+  buildEndpoint,
+  buildUpstreamBody,
+  detectImageType,
+  isValidBase64,
+  stripDataUrlPrefix,
+} from './public/lib.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_EDIT_BODY_BYTES = 30 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 180_000;
 const MAX_IMAGES = 4;
 const MAX_FETCH_IMAGE_BYTES = 50 * 1024 * 1024;
@@ -97,7 +106,7 @@ const sendError = (res, status, message) => sendJson(res, status, { error: { mes
 
 class BodyTooLargeError extends Error {}
 
-function readBody(req) {
+function readBody(req, limit = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -105,7 +114,7 @@ function readBody(req) {
     req.on('data', (chunk) => {
       if (done) return;
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         done = true;
         reject(new BodyTooLargeError());
         return;
@@ -186,27 +195,83 @@ export function createServer({
     }
   }
 
-  async function handleGenerate(req, res) {
+  // Reads and parses a JSON object body; on failure answers the client and returns null.
+  async function readJsonObject(req, res, limit, limitLabel) {
     let raw;
     try {
-      raw = await readBody(req);
+      raw = await readBody(req, limit);
     } catch (err) {
       if (err instanceof BodyTooLargeError) {
         res.setHeader('Connection', 'close');
-        return sendError(res, 413, 'Request body vượt quá 1 MB');
+        sendError(res, 413, 'Request body vượt quá ' + limitLabel);
+      } else {
+        sendError(res, 400, 'Không đọc được request body');
       }
-      return sendError(res, 400, 'Không đọc được request body');
+      return null;
     }
-
     let input;
     try {
       input = JSON.parse(raw);
     } catch {
-      return sendError(res, 400, 'Request body không phải JSON hợp lệ');
+      sendError(res, 400, 'Request body không phải JSON hợp lệ');
+      return null;
     }
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
-      return sendError(res, 400, 'Request body phải là một JSON object');
+      sendError(res, 400, 'Request body phải là một JSON object');
+      return null;
     }
+    return input;
+  }
+
+  // Answers the client with 400 and returns false when the endpoint is not allowed.
+  async function checkUpstream(res, endpoint) {
+    if (!isHttpUrl(endpoint)) {
+      sendError(res, 400, 'Base URL phải bắt đầu bằng http:// hoặc https://');
+      return false;
+    }
+    try {
+      await assertPublicUpstream(endpoint);
+    } catch (err) {
+      if (err instanceof UpstreamBlockedError) {
+        sendError(res, 400, err.message);
+        return false;
+      }
+      throw err;
+    }
+    return true;
+  }
+
+  // One upstream POST. Redirects are never followed; the outcome is data, never a throw.
+  async function postUpstream(endpoint, apiKey, { headers = {}, body }) {
+    try {
+      const upstream = await fetchImpl(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey.trim()}`, ...headers },
+        body,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
+      if (upstream.status >= 300 && upstream.status < 400) {
+        return { networkError: new Error('Upstream trả về chuyển hướng (HTTP ' + upstream.status + '), không được theo dõi') };
+      }
+      return {
+        status: upstream.status,
+        type: upstream.headers.get('content-type') || 'application/octet-stream',
+        buffer: Buffer.from(await upstream.arrayBuffer()),
+      };
+    } catch (err) {
+      return { networkError: err };
+    }
+  }
+
+  const sendRaw = (res, r) => {
+    res.writeHead(r.status, { 'Content-Type': r.type, 'Content-Length': r.buffer.length });
+    res.end(r.buffer);
+  };
+
+  async function handleGenerate(req, res) {
+    const input = await readJsonObject(req, res, MAX_BODY_BYTES, '1 MB');
+    if (!input) return;
     const { baseUrl, apiKey, model, prompt, size, n } = input;
     if (typeof apiKey !== 'string' || apiKey.trim() === '') {
       return sendError(res, 400, 'Thiếu apiKey');
@@ -216,53 +281,23 @@ export function createServer({
     }
 
     const endpoint = buildEndpoint(baseUrl);
-    if (!isHttpUrl(endpoint)) {
-      return sendError(res, 400, 'Base URL phải bắt đầu bằng http:// hoặc https://');
-    }
-    try {
-      await assertPublicUpstream(endpoint);
-    } catch (err) {
-      if (err instanceof UpstreamBlockedError) return sendError(res, 400, err.message);
-      throw err;
-    }
+    if (!(await checkUpstream(res, endpoint))) return;
 
     // Upstream rejects any n > 1 with 400, so fan out n single-image requests.
     const count = Number.isInteger(n) && n > 1 ? Math.min(n, MAX_IMAGES) : 1;
     const body = JSON.stringify(buildUpstreamBody({ model, prompt, size, n: 1 }));
-    const callUpstream = async () => {
-      try {
-        const upstream = await fetchImpl(endpoint, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey.trim()}`,
-            'Content-Type': 'application/json',
-          },
-          body,
-          redirect: 'manual',
-          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-        });
-        if (upstream.status >= 300 && upstream.status < 400) {
-          return { networkError: new Error('Upstream trả về chuyển hướng (HTTP ' + upstream.status + '), không được theo dõi') };
-        }
-        return {
-          status: upstream.status,
-          type: upstream.headers.get('content-type') || 'application/octet-stream',
-          buffer: Buffer.from(await upstream.arrayBuffer()),
-        };
-      } catch (err) {
-        return { networkError: err };
-      }
-    };
+    const callUpstream = () =>
+      postUpstream(endpoint, apiKey, { headers: { 'Content-Type': 'application/json' }, body });
     const results = await Promise.all(Array.from({ length: count }, callUpstream));
+    return respondFanOut(res, results, apiKey, endpoint);
+  }
 
+  // Answers with one result verbatim, or merges several 200 responses in order.
+  function respondFanOut(res, results, apiKey, endpoint) {
     const failed = results.find((r) => r.networkError);
     if (failed) return sendError(res, 502, errorReason(failed.networkError, [apiKey.trim(), endpoint]));
 
-    const sendRaw = (r) => {
-      res.writeHead(r.status, { 'Content-Type': r.type, 'Content-Length': r.buffer.length });
-      res.end(r.buffer);
-    };
-    if (count === 1) return sendRaw(results[0]);
+    if (results.length === 1) return sendRaw(res, results[0]);
 
     // First non-success (or unmergeable) response is passed through verbatim.
     const merged = [];
@@ -276,13 +311,53 @@ export function createServer({
           json = null;
         }
       }
-      if (!json || !Array.isArray(json.data)) return sendRaw(r);
+      if (!json || !Array.isArray(json.data)) return sendRaw(res, r);
       created ??= json.created;
       merged.push(...json.data);
     }
     const payload = { data: merged };
     if (created !== undefined) payload.created = created;
     return sendJson(res, 200, payload);
+  }
+
+  async function handleEdit(req, res) {
+    const input = await readJsonObject(req, res, MAX_EDIT_BODY_BYTES, '30 MB');
+    if (!input) return;
+    const { baseUrl, apiKey, model, prompt, size, n } = input;
+    if (typeof apiKey !== 'string' || apiKey.trim() === '') return sendError(res, 400, 'Thiếu apiKey');
+    if (typeof prompt !== 'string' || prompt.trim() === '') return sendError(res, 400, 'Thiếu prompt');
+
+    // `images` (1..4 base64 strings) or the single-image `image` field.
+    const rawImages = Array.isArray(input.images) ? input.images : input.image !== undefined ? [input.image] : [];
+    if (rawImages.length === 0) return sendError(res, 400, 'Thiếu ảnh nguồn (images)');
+    if (rawImages.length > MAX_IMAGES) return sendError(res, 400, `Tối đa ${MAX_IMAGES} ảnh mỗi yêu cầu`);
+    const parts = [];
+    for (const [i, value] of rawImages.entries()) {
+      if (typeof value !== 'string' || value.trim() === '') return sendError(res, 400, `Ảnh ${i + 1} bị thiếu`);
+      const payload = stripDataUrlPrefix(value);
+      if (!isValidBase64(payload)) return sendError(res, 400, `Ảnh ${i + 1} không phải base64 hợp lệ`);
+      const bytes = Buffer.from(payload, 'base64');
+      const mime = detectImageType(bytes);
+      if (!mime) return sendError(res, 400, `Ảnh ${i + 1} phải là PNG, JPEG hoặc WEBP`);
+      parts.push({ bytes, mime, name: `image${i + 1}.${mime.split('/')[1].replace('jpeg', 'jpg')}` });
+    }
+
+    const endpoint = buildEditEndpoint(baseUrl);
+    if (!(await checkUpstream(res, endpoint))) return;
+
+    // Upstream only supports n = 1 per edit call, so fan out n single-image requests (`n` is never forwarded).
+    const count = Number.isInteger(n) && n > 1 ? Math.min(n, MAX_IMAGES) : 1;
+    const modelName = (typeof model === 'string' ? model.trim() : '') || DEFAULT_MODEL;
+    const callUpstream = () => {
+      const form = new FormData();
+      form.append('model', modelName);
+      form.append('prompt', prompt);
+      if (typeof size === 'string' && size.trim() !== '') form.append('size', size.trim());
+      for (const part of parts) form.append('image[]', new Blob([part.bytes], { type: part.mime }), part.name);
+      return postUpstream(endpoint, apiKey, { body: form });
+    };
+    const results = await Promise.all(Array.from({ length: count }, callUpstream));
+    return respondFanOut(res, results, apiKey, endpoint);
   }
 
   async function handleFetchImage(req, res, url) {
@@ -373,6 +448,13 @@ export function createServer({
           return sendError(res, 405, 'Method not allowed');
         }
         return handleGenerate(req, res);
+      }
+      if (url.pathname === '/api/edit') {
+        if (req.method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          return sendError(res, 405, 'Method not allowed');
+        }
+        return handleEdit(req, res);
       }
       if (url.pathname === '/api/fetch-image') {
         if (req.method !== 'GET') {

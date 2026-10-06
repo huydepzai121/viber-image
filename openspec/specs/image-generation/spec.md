@@ -70,7 +70,7 @@ Generation SHALL NOT send a request when the prompt (trimmed) or API key (trimme
 - **THEN** no request is sent and the message "Vui lòng nhập API key." is shown under the key
 
 ### Requirement: Generate action and states
-The result area SHALL have states idle, loading, success and error. While loading, the generate button SHALL be disabled, show a spinner and the label "Đang tạo ảnh…", and the result area SHALL show n placeholders. Ctrl+Enter (or Cmd+Enter) inside the prompt SHALL trigger generation. Status changes SHALL be announced via an `aria-live="polite"` region.
+The result area SHALL show an idle message while the session feed is empty and the feed otherwise. While any request (generate or edit) is running, the generate button SHALL be disabled, show a spinner and the label "Đang tạo ảnh…" (or "Đang chỉnh sửa…" for an edit), the edit submit button SHALL be disabled, and the new feed entry SHALL show one animated placeholder per requested image. Only one request SHALL run at a time. Ctrl+Enter (or Cmd+Enter) inside the prompt SHALL trigger generation. Status changes SHALL be announced via an `aria-live="polite"` region.
 
 #### Scenario: Loading
 - **WHEN** a valid request is in flight
@@ -80,8 +80,12 @@ The result area SHALL have states idle, loading, success and error. While loadin
 - **WHEN** focus is in the prompt and the user presses Ctrl+Enter
 - **THEN** generation starts exactly as if the button were clicked
 
+#### Scenario: One request at a time
+- **WHEN** an edit request is running
+- **THEN** the generate button and the edit submit button are disabled
+
 ### Requirement: Result rendering
-On a 2xx response the app SHALL read every item in `data`. An item with `b64_json` SHALL be rendered as a PNG from the base64 payload; if the value starts with `data:` the part up to and including the first `,` SHALL be removed first. Otherwise an item with `url` SHALL be rendered from that URL. Items with neither SHALL be skipped. The success banner SHALL show the number of images, elapsed seconds (one decimal, comma separator) and the source field (`b64_json` or `url`, or both).
+On a 2xx response the app SHALL read every item in `data`. An item with `b64_json` SHALL be rendered as a PNG from the base64 payload; if the value starts with `data:` the part up to and including the first `,` SHALL be removed first. Otherwise an item with `url` SHALL be rendered from that URL. Items with neither SHALL be skipped. Results SHALL be rendered inside the session feed (see "Session result feed"). The success banner SHALL describe the latest finished turn: the number of images (or "Đã chỉnh sửa ảnh" for an edit), elapsed seconds (one decimal, comma separator) and the source field (`b64_json` or `url`, or both). Each rendered image SHALL be a `<button>` (see "Edit an image").
 
 #### Scenario: Plain b64_json
 - **WHEN** the response is the sample in `response.txt`
@@ -97,21 +101,21 @@ On a 2xx response the app SHALL read every item in `data`. An item with `b64_jso
 
 #### Scenario: Success without images
 - **WHEN** the response is 2xx but contains no usable item
-- **THEN** the error state is shown with the message "Phản hồi không chứa ảnh" and the raw body
+- **THEN** the turn shows an error block with the message "Phản hồi không chứa ảnh" and the raw body
 
 ### Requirement: Error display
-On a non-2xx response, an unparseable 2xx body, or a network failure, the app SHALL show an error banner with the HTTP status (code and reason, or "Lỗi kết nối" for network failure) and the raw response body; if the body is valid JSON it SHALL be pretty-printed with 2-space indentation. A "Sao chép" button SHALL copy the body to the clipboard and confirm with "Đã sao chép".
+On a non-2xx response, an unparseable 2xx body, or a network failure, the app SHALL show an error block inside the failing feed turn (earlier turns stay) with the HTTP status (code and reason, or "Lỗi kết nối" for network failure) and the raw response body; if the body is valid JSON it SHALL be pretty-printed with 2-space indentation. A "Sao chép" button SHALL copy the body to the clipboard and confirm with "Đã sao chép".
 
 #### Scenario: Unauthorized
 - **WHEN** upstream returns 401 with `{"error":{"message":"Incorrect API key provided."}}`
-- **THEN** the banner shows "HTTP 401" and the pretty-printed JSON
+- **THEN** the turn's error block shows "HTTP 401" and the pretty-printed JSON
 
 #### Scenario: Upstream unreachable
 - **WHEN** the upstream host cannot be reached
-- **THEN** the local server responds 502 with `{"error":{"message":"<reason>"}}` and the UI shows the error banner with that body
+- **THEN** the local server responds 502 with `{"error":{"message":"<reason>"}}` and the UI shows the error block in that turn with that body
 
 ### Requirement: Download images
-Each image SHALL have a "Tải về" control saving it as `img_YYYYMMDD_HHMMSS.png` using the local time when the response arrived. When the response holds more than one image, filenames SHALL be `img_YYYYMMDD_HHMMSS_<i>.png` with i from 1. A "Tải tất cả" control SHALL download every image. URL images SHALL be fetched through the local server so the download works regardless of CORS; a failed fetch SHALL show an error message without clearing results.
+Each image SHALL have a "Tải về" control saving it as `img_YYYYMMDD_HHMMSS.png` using the local time when that turn's response arrived. When the turn holds more than one image, filenames SHALL be `img_YYYYMMDD_HHMMSS_<i>.png` with i from 1. A turn holding more than one image SHALL have a "Tải tất cả" control downloading all of that turn's images. URL images SHALL be fetched through the local server so the download works regardless of CORS; a failed fetch SHALL show an error message without clearing results.
 
 #### Scenario: Single image name
 - **WHEN** one image arrives at 2026-10-06 14:30:22 local time
@@ -122,7 +126,7 @@ Each image SHALL have a "Tải về" control saving it as `img_YYYYMMDD_HHMMSS.p
 - **THEN** they download as `img_20261006_143022_1.png`, `_2.png`, `_3.png`
 
 ### Requirement: Local proxy server
-A local server SHALL serve the UI and expose `POST /api/generate` and `GET /api/fetch-image`. `/api/generate` SHALL accept JSON `{baseUrl, apiKey, model, prompt, size, n}`, forward to the normalized endpoint, and return the upstream status, content type and body unchanged. `/api/fetch-image?url=` SHALL accept only `http:`/`https:` URLs (400 otherwise) and stream the image bytes with the upstream content type. Request bodies over 1 MB SHALL be rejected with 413. The server SHALL bind to `HOST` (default `127.0.0.1`) on `PORT` (default 5173). Every response SHALL carry `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and a `Content-Security-Policy` of `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, and every `/api/*` response SHALL carry `Cache-Control: no-store`. The UI SHALL work under that policy (no inline scripts, style attributes or event handler attributes). `/api/fetch-image` SHALL refuse responses larger than 50 MB. Upstream redirects SHALL NOT be followed: a 3xx upstream response SHALL yield 502 JSON.
+A local server SHALL serve the UI and expose `POST /api/generate`, `POST /api/edit` and `GET /api/fetch-image`. `/api/generate` SHALL accept JSON `{baseUrl, apiKey, model, prompt, size, n}`, forward to the normalized endpoint, and return the upstream status, content type and body unchanged. `/api/fetch-image?url=` SHALL accept only `http:`/`https:` URLs (400 otherwise) and stream the image bytes with the upstream content type. `/api/generate` request bodies over 1 MB, and `/api/edit` request bodies over 30 MB, SHALL be rejected with 413. The server SHALL bind to `HOST` (default `127.0.0.1`) on `PORT` (default 5173). Every response SHALL carry `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and a `Content-Security-Policy` of `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, and every `/api/*` response SHALL carry `Cache-Control: no-store`. The UI SHALL work under that policy (no inline scripts, style attributes or event handler attributes). `/api/fetch-image` SHALL refuse responses larger than 50 MB. Upstream redirects SHALL NOT be followed: a 3xx upstream response SHALL yield 502 JSON.
 
 #### Scenario: Invalid fetch URL
 - **WHEN** `/api/fetch-image?url=file:///etc/passwd` is requested
@@ -144,6 +148,109 @@ A local server SHALL serve the UI and expose `POST /api/generate` and `GET /api/
 - **WHEN** `/api/fetch-image` targets a response larger than 50 MB
 - **THEN** the server responds 413 when the size is declared, or aborts the transfer once 50 MB is exceeded
 
+### Requirement: Estimated progress indicator
+While a request is running, each placeholder frame SHALL show an animated dot grid (round dots on a regular grid of about 12 px filling the frame at the aspect ratio of the chosen size) with a soft accent-coloured glow band sweeping across it and fading toward the edges, in a theme-appropriate dim frame (near-black in dark theme). A pill in the bottom-right corner SHALL show an estimated percentage "NN%". Because the upstream reports no progress, the percentage SHALL be time-based: it SHALL be monotonic, ease toward 95 % over an expected duration and never reach 100 % before the response arrives; the expected duration SHALL be 60 s for a request without images, 70 s for an edit or reference-image request with up to 2 images, plus 15 s for each further image. When the response arrives the pill SHALL show 100 % briefly before the images replace the frame. The prompt line SHALL be shown above the frames as "Đang tạo: <prompt>" or "Đang chỉnh sửa: <prompt>". Each frame SHALL expose `role="progressbar"`, `aria-valuemin`/`aria-valuemax`, an updated `aria-valuenow` and the label "Tiến độ ước tính". With `prefers-reduced-motion: reduce` the dots SHALL be static while the percentage still updates.
+
+#### Scenario: Progress is an estimate
+- **WHEN** a request has run for 30 s of an expected 60 s
+- **THEN** the pill shows a value between 40 % and 90 % and `aria-valuenow` equals that value
+
+#### Scenario: Never 100 before the response
+- **WHEN** a request runs far longer than the expected duration
+- **THEN** the pill never exceeds 95 % until the response arrives
+
+#### Scenario: Completion
+- **WHEN** the response arrives with images
+- **THEN** the pill shows 100 % briefly and then the images replace the placeholder
+
+#### Scenario: Reduced motion
+- **WHEN** the visitor prefers reduced motion
+- **THEN** the dots do not animate and the percentage still updates
+
+### Requirement: Edit an image
+Each rendered result image SHALL be a real `<button>` with accessible name "Chỉnh sửa ảnh N" (N from 1 within its turn). Activating it (click, Enter or Space) SHALL open a modal native `<dialog>` showing the image, a required textarea labelled "Mô tả chỉnh sửa" with inline validation, optional extra reference images (see below) and the buttons "Chỉnh sửa" and "Huỷ". Esc or "Huỷ" SHALL close the dialog and return focus to the image button. Submitting SHALL send the image (base64 from the response, or for a URL image the bytes fetched through `/api/fetch-image`) as the first image, followed by any extra reference images, with the dialog prompt and the current Base URL, API key, model and size to `POST /api/edit` with `n` = 1, and add an edit turn to the feed. The dialog SHALL accept up to 3 extra reference images (4 images in total, each ≤ 20 MB, total within the request limit) through a file picker (`accept="image/png,image/jpeg,image/webp"`, multiple), drag-and-drop and paste, show thumbnails with "Bỏ ảnh N" remove buttons, and reject others with an inline message. The edit submit button SHALL be disabled while any request runs.
+
+#### Scenario: Open and cancel
+- **WHEN** the user presses Enter on a focused result image and then Esc
+- **THEN** the dialog opens and closes and focus returns to that image
+
+#### Scenario: Empty description
+- **WHEN** the user submits with an empty description
+- **THEN** no request is sent and the message "Vui lòng nhập mô tả chỉnh sửa." is shown
+
+#### Scenario: Edit request
+- **WHEN** the user submits "make it blue" for image 1
+- **THEN** `/api/edit` receives that image and prompt, and a new "Chỉnh sửa" turn with the source thumbnail appears first in the feed
+
+#### Scenario: Extra reference images
+- **WHEN** the user attaches 2 extra images in the dialog and submits
+- **THEN** the request carries 3 images with the clicked image first, and the turn header shows all 3 thumbnails
+
+#### Scenario: Too many images
+- **WHEN** the dialog already holds the clicked image plus 3 extras and another is added
+- **THEN** it is rejected with an inline message
+
+### Requirement: Reference images on create
+Under the prompt the create form SHALL offer "Đính kèm ảnh": a styled label for a real `<input type="file" accept="image/png,image/jpeg,image/webp" multiple>`, plus drag-and-drop onto the prompt card and paste from the clipboard into the prompt textarea. At most 4 images SHALL be attached, each ≤ 20 MB and all together small enough that the base64 request stays within 30 MB; other files SHALL be rejected with an inline message. Attached images SHALL be shown as thumbnails with remove buttons labelled "Bỏ ảnh N". With at least one image attached, "Tạo ảnh" SHALL send the images and prompt to `POST /api/edit` (with `n` from the settings, fanned out by the server), the feed turn SHALL be labelled "Tạo ảnh từ ảnh tham chiếu" and show the reference thumbnails; with none attached it SHALL use `/api/generate` as before. Attachments SHALL be cleared after a successful request, kept after an error, and never persisted.
+
+#### Scenario: Attach and generate
+- **WHEN** the user attaches 2 images, enters a prompt and presses "Tạo ảnh"
+- **THEN** one request with both images goes to `/api/edit` and the new turn shows both thumbnails
+
+#### Scenario: Limits
+- **WHEN** the user attaches a fifth image, a GIF, or an image over 20 MB
+- **THEN** it is rejected with an inline message and nothing is attached
+
+#### Scenario: Kept on error
+- **WHEN** the request fails
+- **THEN** the attachments remain so the visitor can retry
+
+#### Scenario: Paste
+- **WHEN** the user pastes an image from the clipboard into the prompt
+- **THEN** the image is attached and no text is inserted
+
+### Requirement: Session result feed
+Results SHALL be kept in an in-memory session feed, newest turn first, and SHALL NOT be persisted (no localStorage, IndexedDB or server storage). Each turn SHALL show a header with its kind ("Tạo ảnh", "Tạo ảnh từ ảnh tham chiếu" or "Chỉnh sửa"), the prompt text and the local time, then its images each with the download control and filename convention above (using that turn's time). A turn with source images SHALL show small thumbnails of them. A failed turn SHALL show its error (status, raw body, "Sao chép") inside the turn without removing earlier turns. A "Xoá tất cả" button in the result card header SHALL remove every turn and revoke their blob URLs; blob URLs SHALL NOT be revoked otherwise. "Xoá tất cả" SHALL be disabled while a request runs.
+
+#### Scenario: Newest first
+- **WHEN** the user generates and then edits an image
+- **THEN** the edit turn appears above the generate turn and the earlier images stay downloadable
+
+#### Scenario: Error keeps history
+- **WHEN** a later request fails
+- **THEN** the failing turn shows the error and earlier turns are unchanged
+
+#### Scenario: Clear all
+- **WHEN** the user activates "Xoá tất cả"
+- **THEN** all turns disappear and the idle message is shown
+
+### Requirement: Edit proxy endpoint
+`POST /api/edit` SHALL accept JSON `{baseUrl, apiKey, model, prompt, size, images, n}` (or the single-image field `image`) with a body cap of 30 MB (413 beyond). `images` SHALL hold 1 to 4 base64 strings, each optionally prefixed with `data:...,`; anything else (missing apiKey, prompt or images, more than 4 images, invalid base64, or content that is not PNG, JPEG or WEBP by magic bytes) SHALL yield 400 JSON. The server SHALL build a `multipart/form-data` request with fields `model` (default when empty), `prompt`, `size` (when given) and one `image[]` file part per image in order, each with its detected content type and a filename (`image1.png`, …), and POST it to the normalized Base URL followed by `/v1/images/edits` with `Authorization: Bearer <key>`. `n` SHALL NOT be forwarded; for `n` between 2 and 4 the server SHALL send that many concurrent single-image upstream requests and merge their `data` arrays like `/api/generate`. The upstream status, content type and body SHALL be returned unchanged for a single request (first failure verbatim when fanned out), redirects SHALL NOT be followed (502), network failures SHALL give a redacted 502, the upstream address restrictions SHALL apply, nothing SHALL be logged, and responses SHALL carry `Cache-Control: no-store`.
+
+#### Scenario: Multipart forwarding
+- **WHEN** a valid request with one PNG image arrives
+- **THEN** the upstream receives `POST /v1/images/edits` with fields model, prompt, size and a PNG `image[]` part, and no `n` field
+
+#### Scenario: Several images
+- **WHEN** a request carries a PNG, a JPEG and a WEBP
+- **THEN** the upstream receives three `image[]` parts in that order with content types image/png, image/jpeg and image/webp
+
+#### Scenario: Fan-out
+- **WHEN** `n` is 2
+- **THEN** two upstream requests are sent, each with the same images, and the results are merged in one response
+
+#### Scenario: Rejections
+- **WHEN** the request has no prompt, no image, five images, invalid base64 or non-image bytes
+- **THEN** the server answers 400 and sends no upstream request
+
+#### Scenario: Oversized body
+- **WHEN** the body exceeds 30 MB
+- **THEN** the server answers 413
+
+#### Scenario: Blocked upstream
+- **WHEN** Base URL points to a private or loopback address
+- **THEN** the server answers 400 and sends no upstream request
+
 ### Requirement: Privacy: no collection of credentials
 The server SHALL NOT collect, store or log visitors' API keys, Base URLs or prompts: it SHALL NOT write them to files, stdout, stderr or any console, and SHALL NOT include them (or the full upstream URL) in its own error messages; credential-bearing text and URLs SHALL be redacted from 502 messages. The only output at startup SHALL be the listening address. Credentials SHALL be used only for the single forwarded upstream request.
 
@@ -156,7 +263,7 @@ The server SHALL NOT collect, store or log visitors' API keys, Base URLs or prom
 - **THEN** the 502 message contains neither
 
 ### Requirement: Upstream address restrictions
-`/api/generate` and `/api/fetch-image` SHALL accept only `http:`/`https:` URLs without userinfo (`user:pass@`) and SHALL resolve the hostname and reject with 400 JSON any URL where any resolved address is loopback, private (10/8, 172.16/12, 192.168/16), link-local (169.254/16 including cloud metadata), CGNAT (100.64/10), `0.0.0.0/8`, multicast or reserved, IPv6 `::1`, `fc00::/7`, `fe80::/10`, multicast, or an IPv4-mapped form of those. These checks SHALL always be on; no environment variable or runtime setting SHALL disable them.
+`/api/generate`, `/api/edit` and `/api/fetch-image` SHALL accept only `http:`/`https:` URLs without userinfo (`user:pass@`) and SHALL resolve the hostname and reject with 400 JSON any URL where any resolved address is loopback, private (10/8, 172.16/12, 192.168/16), link-local (169.254/16 including cloud metadata), CGNAT (100.64/10), `0.0.0.0/8`, multicast or reserved, IPv6 `::1`, `fc00::/7`, `fe80::/10`, multicast, or an IPv4-mapped form of those. These checks SHALL always be on; no environment variable or runtime setting SHALL disable them.
 
 #### Scenario: Internal address blocked
 - **WHEN** Base URL is `http://169.254.169.254`, `http://127.0.0.1`, `http://[::1]` or `http://[::ffff:10.0.0.1]`
