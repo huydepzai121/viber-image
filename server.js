@@ -151,7 +151,7 @@ function isHttpUrl(value) {
 
 export function createServer({
   fetchImpl = fetch,
-  allowPrivateUpstream = process.env.ALLOW_PRIVATE_UPSTREAM === '1',
+  allowPrivateUpstream = false,
   lookup = (host) => dns.lookup(host, { all: true }),
   maxImageBytes = MAX_FETCH_IMAGE_BYTES,
 } = {}) {

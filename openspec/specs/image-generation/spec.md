@@ -156,10 +156,10 @@ The server SHALL NOT collect, store or log visitors' API keys, Base URLs or prom
 - **THEN** the 502 message contains neither
 
 ### Requirement: Upstream address restrictions
-`/api/generate` and `/api/fetch-image` SHALL accept only `http:`/`https:` URLs without userinfo (`user:pass@`) and SHALL resolve the hostname and reject with 400 JSON any URL where any resolved address is loopback, private (10/8, 172.16/12, 192.168/16), link-local (169.254/16 including cloud metadata), CGNAT (100.64/10), `0.0.0.0/8`, multicast or reserved, IPv6 `::1`, `fc00::/7`, `fe80::/10`, multicast, or an IPv4-mapped form of those. Setting the environment variable `ALLOW_PRIVATE_UPSTREAM=1` SHALL disable the address check (for local use) but not the userinfo check or the no-redirect rule.
+`/api/generate` and `/api/fetch-image` SHALL accept only `http:`/`https:` URLs without userinfo (`user:pass@`) and SHALL resolve the hostname and reject with 400 JSON any URL where any resolved address is loopback, private (10/8, 172.16/12, 192.168/16), link-local (169.254/16 including cloud metadata), CGNAT (100.64/10), `0.0.0.0/8`, multicast or reserved, IPv6 `::1`, `fc00::/7`, `fe80::/10`, multicast, or an IPv4-mapped form of those. These checks SHALL always be on; no environment variable or runtime setting SHALL disable them.
 
 #### Scenario: Internal address blocked
-- **WHEN** Base URL is `http://169.254.169.254`, `http://127.0.0.1`, `http://[::1]` or `http://[::ffff:10.0.0.1]` and `ALLOW_PRIVATE_UPSTREAM` is not set
+- **WHEN** Base URL is `http://169.254.169.254`, `http://127.0.0.1`, `http://[::1]` or `http://[::ffff:10.0.0.1]`
 - **THEN** the server responds 400 and sends no upstream request
 
 #### Scenario: Hostname resolving to a private address
@@ -168,11 +168,11 @@ The server SHALL NOT collect, store or log visitors' API keys, Base URLs or prom
 
 #### Scenario: Userinfo rejected
 - **WHEN** the URL is `https://user:pass@example.com`
-- **THEN** the server responds 400, with or without `ALLOW_PRIVATE_UPSTREAM`
+- **THEN** the server responds 400
 
-#### Scenario: Local development
-- **WHEN** `ALLOW_PRIVATE_UPSTREAM=1` and Base URL is `http://127.0.0.1:9000`
-- **THEN** the request is forwarded
+#### Scenario: Check cannot be disabled
+- **WHEN** the server runs with `ALLOW_PRIVATE_UPSTREAM=1` (or any other environment) and Base URL is `http://127.0.0.1:9000`
+- **THEN** the server responds 400 and sends no upstream request
 
 ### Requirement: Docker deployment
 The project SHALL include a `Dockerfile`, a `.dockerignore` and a `compose.yaml` so the app runs with `docker compose up -d`. The image SHALL be based on an official Node.js LTS Alpine image, contain only the runtime files (`package.json`, `server.js`, `public/`), run as the non-root `node` user, set `HOST=0.0.0.0` and `PORT=5173`, expose port 5173 and define a HEALTHCHECK that requests `/` and fails on a non-2xx response. `compose.yaml` SHALL publish the port as `127.0.0.1:${PORT:-5173}:5173` and use `restart: unless-stopped`. The image SHALL NOT contain `response.txt`, `test/`, `openspec/`, `.env` files or any API key.

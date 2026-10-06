@@ -13,8 +13,7 @@
 npm start
 ```
 
-Mở http://127.0.0.1:5173. Đổi cổng bằng biến môi trường `PORT` (ví dụ `PORT=8080 npm start`). Biến `HOST` quyết định địa chỉ lắng nghe, mặc định `127.0.0.1` (chỉ máy bạn truy cập được). Muốn gọi API ở `localhost`/LAN, xem `ALLOW_PRIVATE_UPSTREAM` bên dưới.
-
+Mở http://127.0.0.1:5173. Đổi cổng bằng biến môi trường `PORT` (ví dụ `PORT=8080 npm start`). Biến `HOST` quyết định địa chỉ lắng nghe, mặc định `127.0.0.1` (chỉ máy bạn truy cập được).
 Giao diện có hai chế độ sáng/tối: mặc định theo hệ điều hành, nút ở góc phải thanh tiêu đề để đổi và lựa chọn được lưu trên trình duyệt.
 
 ## Kiểm thử
@@ -51,9 +50,9 @@ Chỉ cần nhập địa chỉ gốc, ví dụ `https://bedrock.viber.vn`. Ứn
 2. Đặt sau reverse proxy có **HTTPS** (Caddy, nginx, Traefik...). Không mở cổng HTTP thuần ra Internet, vì API key đi qua đường truyền này. `compose.yaml` chỉ publish cổng trên `127.0.0.1`, nên cần reverse proxy trỏ về `127.0.0.1:5173` (hoặc đổi mapping cổng nếu proxy chạy ở máy khác).
 3. Không bật log request chứa body ở reverse proxy.
 
-### ALLOW_PRIVATE_UPSTREAM
+### Chặn địa chỉ nội bộ
 
-Đặt `ALLOW_PRIVATE_UPSTREAM=1` để tắt kiểm tra địa chỉ riêng/nội bộ, dùng khi chạy cục bộ và cần gọi API ở `localhost` hoặc mạng LAN (ví dụ `ALLOW_PRIVATE_UPSTREAM=1 npm start`). **Không đặt biến này trên server công khai.** Kiểm tra `user:pass@` và việc không theo redirect luôn bật.
+Server luôn từ chối Base URL hoặc URL ảnh trỏ tới `localhost`, mạng LAN/riêng (10.x, 172.16–31.x, 192.168.x), link-local/metadata cloud (169.254.x), IPv6 nội bộ, URL có `user:pass@`, và không theo redirect. Không có biến môi trường nào tắt được kiểm tra này, nên ứng dụng không dùng được với API chạy ở `localhost`/LAN.
 
 ## Docker
 

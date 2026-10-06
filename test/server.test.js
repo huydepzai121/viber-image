@@ -431,25 +431,20 @@ test('URLs with user:password are rejected even when private upstreams are allow
   }
 });
 
-test('ALLOW_PRIVATE_UPSTREAM=1 turns the address check off', async () => {
+test('no environment variable can turn the address check off', async () => {
   const previous = process.env.ALLOW_PRIVATE_UPSTREAM;
-  const status = async () => {
-    const s = await startServer({ fetchImpl: async () => new Response('{"data":[]}') });
-    try {
-      return (await fetch(`${s.url}/api/generate`, {
-        method: 'POST',
-        body: JSON.stringify({ apiKey: 'k', prompt: 'p', baseUrl: 'http://127.0.0.1:9' }),
-      })).status;
-    } finally {
-      s.close();
-    }
-  };
+  process.env.ALLOW_PRIVATE_UPSTREAM = '1';
+  let calls = 0;
+  const s = await startServer({ fetchImpl: async () => { calls++; return new Response('{"data":[]}'); } });
   try {
-    delete process.env.ALLOW_PRIVATE_UPSTREAM;
-    assert.equal(await status(), 400);
-    process.env.ALLOW_PRIVATE_UPSTREAM = '1';
-    assert.equal(await status(), 200);
+    const res = await fetch(`${s.url}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ apiKey: 'k', prompt: 'p', baseUrl: 'http://127.0.0.1:9' }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(calls, 0);
   } finally {
+    s.close();
     if (previous === undefined) delete process.env.ALLOW_PRIVATE_UPSTREAM;
     else process.env.ALLOW_PRIVATE_UPSTREAM = previous;
   }
