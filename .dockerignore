@@ -1,0 +1,13 @@
+node_modules
+.env
+.env.*
+response.txt
+test
+openspec
+.git
+.gitignore
+.dockerignore
+Dockerfile
+compose.yaml
+README.md
+*.log

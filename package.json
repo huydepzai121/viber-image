@@ -1,0 +1,14 @@
+{
+  "name": "viber-image",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ứng dụng web cục bộ để tạo ảnh qua API tương thích OpenAI (/v1/images/generations).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
