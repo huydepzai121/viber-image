@@ -175,7 +175,7 @@ The server SHALL NOT collect, store or log visitors' API keys, Base URLs or prom
 - **THEN** the server responds 400 and sends no upstream request
 
 ### Requirement: Docker deployment
-The project SHALL include a `Dockerfile`, a `.dockerignore` and a `compose.yaml` so the app runs with `docker compose up -d`. The image SHALL be based on an official Node.js LTS Alpine image, contain only the runtime files (`package.json`, `server.js`, `public/`), run as the non-root `node` user, set `HOST=0.0.0.0` and `PORT=5173`, expose port 5173 and define a HEALTHCHECK that requests `/` and fails on a non-2xx response. `compose.yaml` SHALL publish the port as `127.0.0.1:${PORT:-5173}:5173` and use `restart: unless-stopped`. The image SHALL NOT contain `response.txt`, `test/`, `openspec/`, `.env` files or any API key.
+The project SHALL include a `Dockerfile`, a `.dockerignore` and a `compose.yaml` so the app runs with `docker compose up -d`. The image SHALL be based on an official Node.js LTS Alpine image, contain only the runtime files (`package.json`, `server.js`, `public/`), run as the non-root `node` user, set `HOST=0.0.0.0` and `PORT=5173`, expose port 5173 and define a HEALTHCHECK that requests `/` and fails on a non-2xx response. `compose.yaml` SHALL publish the port as `${BIND:-0.0.0.0}:${PORT:-5173}:5173` (reachable on the server's public address by default; `BIND=127.0.0.1` restricts it to the host) and use `restart: unless-stopped`. The image SHALL NOT contain `response.txt`, `test/`, `openspec/`, `.env` files or any API key.
 
 #### Scenario: Run with compose
 - **WHEN** the user runs `docker compose up -d --build` and opens `http://localhost:5173`
@@ -191,7 +191,11 @@ The project SHALL include a `Dockerfile`, a `.dockerignore` and a `compose.yaml`
 
 #### Scenario: Custom host port
 - **WHEN** the user runs `PORT=8080 docker compose up -d`
-- **THEN** the app is reachable at `http://localhost:8080` and only from the local machine
+- **THEN** the app is reachable at `http://localhost:8080` and on the server's public address at port 8080
+
+#### Scenario: Restrict to host
+- **WHEN** the user runs `BIND=127.0.0.1 docker compose up -d`
+- **THEN** the app is reachable only from the server itself
 
 ### Requirement: Light and dark theme
 The UI SHALL offer a light and a dark theme with identical layout, each meeting WCAG AA text contrast. With no stored choice the theme SHALL follow the operating system's `prefers-color-scheme` and update live when it changes. A header toggle button (accessible label "Chuyển sang giao diện sáng" / "Chuyển sang giao diện tối", `aria-pressed` true when dark) SHALL switch themes and persist the choice in localStorage; a stored choice overrides the OS setting. The theme SHALL be applied before first paint (no flash). Unavailable storage SHALL fall back to the OS setting without errors.

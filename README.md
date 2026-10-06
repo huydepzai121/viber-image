@@ -47,7 +47,7 @@ Chỉ cần nhập địa chỉ gốc, ví dụ `https://bedrock.viber.vn`. Ứn
 ### Triển khai công khai
 
 1. Chạy server với `HOST=0.0.0.0` (hoặc dùng Docker, trong container `HOST=0.0.0.0` sẵn).
-2. Đặt sau reverse proxy có **HTTPS** (Caddy, nginx, Traefik...). Không mở cổng HTTP thuần ra Internet, vì API key đi qua đường truyền này. `compose.yaml` chỉ publish cổng trên `127.0.0.1`, nên cần reverse proxy trỏ về `127.0.0.1:5173` (hoặc đổi mapping cổng nếu proxy chạy ở máy khác).
+2. Đặt sau reverse proxy có **HTTPS** (Caddy, nginx, Traefik...). Không mở cổng HTTP thuần ra Internet, vì API key đi qua đường truyền này. Khi đã có reverse proxy, chạy `BIND=127.0.0.1 docker compose up -d` (hoặc ghi `BIND=127.0.0.1` vào file `.env`) để cổng 5173 chỉ mở trong máy, rồi trỏ proxy về `127.0.0.1:5173`.
 3. Không bật log request chứa body ở reverse proxy.
 
 ### Chặn địa chỉ nội bộ
@@ -60,10 +60,10 @@ Server luôn từ chối Base URL hoặc URL ảnh trỏ tới `localhost`, mạ
 docker compose up -d --build
 ```
 
-Mở http://localhost:5173. Đổi cổng trên máy host bằng `PORT=8080 docker compose up -d`. Cổng chỉ được publish trên `127.0.0.1` nên chỉ máy bạn truy cập được.
+Mở http://localhost:5173. Đổi cổng trên máy host bằng `PORT=8080 docker compose up -d`. Mặc định cổng mở trên mọi địa chỉ (`0.0.0.0`) nên truy cập được qua IP public của server, ví dụ `http://<IP-server>:5173` (nhớ mở cổng 5173 ở firewall/security group). Biến `BIND` chọn địa chỉ publish, ví dụ `BIND=127.0.0.1` để chỉ máy server truy cập được. Truy cập qua HTTP thuần thì API key đi qua mạng không mã hoá; chạy lâu dài nên đặt sau HTTPS.
 
 - Image dựa trên `node:22-alpine`, chỉ chứa `package.json`, `server.js` và `public/`, chạy bằng user `node`.
-- Trong container `HOST=0.0.0.0` (bắt buộc để Docker publish cổng); việc giới hạn truy cập do `compose.yaml` đảm nhiệm.
+- Trong container `HOST=0.0.0.0` (bắt buộc để Docker publish cổng); địa chỉ publish ra ngoài do biến `BIND` trong `compose.yaml` quyết định.
 - Có `HEALTHCHECK` gọi `/`; xem trạng thái bằng `docker compose ps`.
 - Không có API key hay file `.env` nào trong image; bạn nhập key trên giao diện.
 - Dừng và xoá: `docker compose down`.
