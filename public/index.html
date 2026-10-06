@@ -4,19 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Viber Image Studio</title>
-<script>
-(function () {
-  var theme = null;
-  try {
-    var stored = localStorage.getItem('viber-image-theme');
-    if (stored === 'light' || stored === 'dark') theme = stored;
-  } catch (e) {}
-  if (!theme) {
-    theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  }
-  document.documentElement.setAttribute('data-theme', theme);
-})();
-</script>
+<script src="/theme-init.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
@@ -68,6 +56,11 @@
         </button>
       </div>
       <div class="field-error" id="apikey-error" hidden></div>
+      <label class="check" for="remember-key">
+        <input id="remember-key" type="checkbox">
+        <span>Ghi nhớ API key trên trình duyệt này</span>
+      </label>
+      <div class="field-note">Key chỉ được gửi tới API qua máy chủ này, không được lưu hay ghi log.</div>
     </div>
 
     <div class="field">
@@ -89,16 +82,16 @@
       <legend>Kích thước</legend>
       <div class="size-grid" id="sizes">
         <button type="button" class="size-tile" data-size="1024x1024" aria-pressed="false" aria-label="Vuông 1024x1024">
-          <span class="shape" style="width:16px;height:16px"></span><span class="size-label">Vuông</span><span class="size-short mono">1:1</span>
+          <span class="shape shape-square"></span><span class="size-label">Vuông</span><span class="size-short mono">1:1</span>
         </button>
         <button type="button" class="size-tile" data-size="1536x1024" aria-pressed="false" aria-label="Ngang 1536x1024">
-          <span class="shape" style="width:20px;height:13px"></span><span class="size-label">Ngang</span><span class="size-short mono">3:2</span>
+          <span class="shape shape-wide"></span><span class="size-label">Ngang</span><span class="size-short mono">3:2</span>
         </button>
         <button type="button" class="size-tile" data-size="1024x1536" aria-pressed="false" aria-label="Dọc 1024x1536">
-          <span class="shape" style="width:13px;height:20px"></span><span class="size-label">Dọc</span><span class="size-short mono">2:3</span>
+          <span class="shape shape-tall"></span><span class="size-label">Dọc</span><span class="size-short mono">2:3</span>
         </button>
         <button type="button" class="size-tile" data-size="auto" aria-pressed="false" aria-label="Tự động auto">
-          <span class="shape dashed" style="width:16px;height:16px"></span><span class="size-label">Tự động</span><span class="size-short mono">auto</span>
+          <span class="shape shape-square dashed"></span><span class="size-label">Tự động</span><span class="size-short mono">auto</span>
         </button>
       </div>
     </fieldset>

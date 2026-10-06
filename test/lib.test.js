@@ -12,6 +12,7 @@ import {
   makeFilename,
   normalizeBaseUrl,
   sanitizeSettings,
+  settingsForStorage,
 } from '../public/lib.js';
 
 const FULL = 'https://bedrock.viber.vn/v1/images/generations';
@@ -110,7 +111,7 @@ test('formatElapsed uses one decimal and a comma', () => {
 
 test('sanitizeSettings falls back per field', () => {
   assert.deepEqual(sanitizeSettings(null), {
-    baseUrl: DEFAULT_BASE_URL, apiKey: '', model: 'gpt-image-2-5', prompt: '', size: '1024x1024', n: 1,
+    baseUrl: DEFAULT_BASE_URL, apiKey: '', rememberKey: false, model: 'gpt-image-2-5', prompt: '', size: '1024x1024', n: 1,
   });
   const s = sanitizeSettings({ model: 'x-model', n: 9, size: '5x5', apiKey: 3, prompt: 'cat' });
   assert.equal(s.model, 'x-model');
@@ -129,4 +130,20 @@ test('buildUpstreamBody has the exact key order and default model', () => {
     '{"model":"gpt-image-2-5","prompt":"cat","size":"1536x1024","n":2}',
   );
   assert.equal(buildUpstreamBody({ model: '  ', prompt: 'p', size: 'auto', n: 1 }).model, 'gpt-image-2-5');
+});
+
+test('a stored API key is only restored when rememberKey is true', () => {
+  assert.equal(sanitizeSettings({ apiKey: 'sk-secret' }).apiKey, '');
+  assert.equal(sanitizeSettings({ apiKey: 'sk-secret', rememberKey: 'yes' }).apiKey, '');
+  const opted = sanitizeSettings({ apiKey: 'sk-secret', rememberKey: true });
+  assert.equal(opted.apiKey, 'sk-secret');
+  assert.equal(opted.rememberKey, true);
+});
+
+test('settingsForStorage drops the API key unless the visitor opted in', () => {
+  const base = { baseUrl: 'u', apiKey: 'sk-secret', model: 'm', prompt: 'p', size: 'auto', n: 2 };
+  assert.equal(settingsForStorage({ ...base, rememberKey: false }).apiKey, '');
+  assert.equal(JSON.stringify(settingsForStorage({ ...base, rememberKey: false })).includes('sk-secret'), false);
+  assert.equal(settingsForStorage({ ...base, rememberKey: true }).apiKey, 'sk-secret');
+  assert.equal(base.apiKey, 'sk-secret'); // input is not mutated
 });

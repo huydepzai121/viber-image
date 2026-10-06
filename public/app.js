@@ -9,6 +9,7 @@ import {
   makeFilename,
   normalizeBaseUrl,
   sanitizeSettings,
+  settingsForStorage,
 } from './lib.js';
 
 const STORAGE_KEY = 'viber-image-settings';
@@ -20,6 +21,7 @@ const el = {
   baseUrl: $('baseurl'),
   apiKey: $('apikey'),
   apiKeyError: $('apikey-error'),
+  rememberKey: $('remember-key'),
   toggleKey: $('toggle-key'),
   eyeOn: $('eye-on'),
   eyeOff: $('eye-off'),
@@ -72,7 +74,7 @@ function loadSettings() {
 
 function saveSettings() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.settings));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsForStorage(state.settings)));
   } catch {
     /* storage unavailable: keep working with in-memory settings */
   }
@@ -482,6 +484,7 @@ el.apiKey.addEventListener('input', () => {
     el.apiKey.removeAttribute('aria-invalid');
   }
 });
+el.rememberKey.addEventListener('change', () => update({ rememberKey: el.rememberKey.checked }));
 el.model.addEventListener('input', () => update({ model: el.model.value }));
 el.prompt.addEventListener('input', () => {
   update({ prompt: el.prompt.value });
@@ -568,6 +571,8 @@ applyTheme(readStoredTheme() || systemTheme());
 el.baseUrl.value = state.settings.baseUrl;
 el.baseUrl.placeholder = DEFAULT_BASE_URL;
 el.apiKey.value = state.settings.apiKey;
+el.rememberKey.checked = state.settings.rememberKey;
+saveSettings(); // scrubs any API key stored before the opt-in existed
 el.model.value = state.settings.model;
 el.prompt.value = state.settings.prompt;
 renderRequestPreview();

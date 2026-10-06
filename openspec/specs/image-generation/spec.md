@@ -25,7 +25,7 @@ The UI SHALL provide inputs for Base URL, API key and model. Base URL SHALL defa
 - **THEN** the key input switches between masked and plain text and the button's accessible label switches between "Hiện API key" and "Ẩn API key"
 
 ### Requirement: Settings persistence
-The app SHALL persist Base URL, API key, model, prompt, size and n in browser localStorage on change and restore them on load. If storage is unavailable or holds invalid values, the app SHALL use defaults without failing.
+The app SHALL persist Base URL, model, prompt, size, n and the "remember key" choice in browser localStorage on change and restore them on load. The API key SHALL be written to localStorage only while the checkbox "Ghi nhớ API key trên trình duyệt này" (default unchecked, shown under the API key field) is checked; otherwise the key SHALL stay in memory only and any key previously stored SHALL be removed from localStorage on load and when the box is unchecked. A visible note "Key chỉ được gửi tới API qua máy chủ này, không được lưu hay ghi log." SHALL appear under the key field. If storage is unavailable or holds invalid values, the app SHALL use defaults without failing.
 
 #### Scenario: Restore after reload
 - **WHEN** the user changes model to `x-model` and reloads the page
@@ -34,6 +34,18 @@ The app SHALL persist Base URL, API key, model, prompt, size and n in browser lo
 #### Scenario: Corrupt stored value
 - **WHEN** localStorage holds a non-JSON or out-of-range value (e.g. n = 9)
 - **THEN** defaults are used for those fields (n = 1)
+
+#### Scenario: Key not remembered by default
+- **WHEN** the user types an API key without checking "Ghi nhớ API key trên trình duyệt này" and reloads the page
+- **THEN** the key field is empty and localStorage contains no API key
+
+#### Scenario: Key remembered on opt-in
+- **WHEN** the user checks the box, types an API key and reloads the page
+- **THEN** the key field is restored and the box is still checked
+
+#### Scenario: Opting out clears the stored key
+- **WHEN** a key was stored and the user unchecks the box
+- **THEN** the key is removed from localStorage while remaining in the field for the current page
 
 ### Requirement: Request parameters
 The UI SHALL provide a prompt textarea, a size choice among `1024x1024`, `1536x1024`, `1024x1536`, `auto` (default `1024x1024`), and an n choice among 1–4 (default 1). Choices SHALL be buttons exposing `aria-pressed`.
@@ -110,7 +122,7 @@ Each image SHALL have a "Tải về" control saving it as `img_YYYYMMDD_HHMMSS.p
 - **THEN** they download as `img_20261006_143022_1.png`, `_2.png`, `_3.png`
 
 ### Requirement: Local proxy server
-A local server SHALL serve the UI and expose `POST /api/generate` and `GET /api/fetch-image`. `/api/generate` SHALL accept JSON `{baseUrl, apiKey, model, prompt, size, n}`, forward to the normalized endpoint, and return the upstream status, content type and body unchanged. `/api/fetch-image?url=` SHALL accept only `http:`/`https:` URLs (400 otherwise) and stream the image bytes with the upstream content type. Request bodies over 1 MB SHALL be rejected with 413. The server SHALL bind to `HOST` (default `127.0.0.1`) on `PORT` (default 5173) and SHALL NOT log the API key.
+A local server SHALL serve the UI and expose `POST /api/generate` and `GET /api/fetch-image`. `/api/generate` SHALL accept JSON `{baseUrl, apiKey, model, prompt, size, n}`, forward to the normalized endpoint, and return the upstream status, content type and body unchanged. `/api/fetch-image?url=` SHALL accept only `http:`/`https:` URLs (400 otherwise) and stream the image bytes with the upstream content type. Request bodies over 1 MB SHALL be rejected with 413. The server SHALL bind to `HOST` (default `127.0.0.1`) on `PORT` (default 5173). Every response SHALL carry `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and a `Content-Security-Policy` of `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, and every `/api/*` response SHALL carry `Cache-Control: no-store`. The UI SHALL work under that policy (no inline scripts, style attributes or event handler attributes). `/api/fetch-image` SHALL refuse responses larger than 50 MB. Upstream redirects SHALL NOT be followed: a 3xx upstream response SHALL yield 502 JSON.
 
 #### Scenario: Invalid fetch URL
 - **WHEN** `/api/fetch-image?url=file:///etc/passwd` is requested
@@ -119,6 +131,48 @@ A local server SHALL serve the UI and expose `POST /api/generate` and `GET /api/
 #### Scenario: Status passthrough
 - **WHEN** upstream returns 429 with a text body
 - **THEN** `/api/generate` responds 429 with the same body
+
+#### Scenario: Security headers
+- **WHEN** any path (static, API or error) is requested
+- **THEN** the response includes the Content-Security-Policy, Referrer-Policy, X-Content-Type-Options and X-Frame-Options headers above, and `/api/*` responses also include `Cache-Control: no-store`
+
+#### Scenario: Redirect not followed
+- **WHEN** the upstream answers with a 302 redirect
+- **THEN** the server responds 502 and never requests the redirect target
+
+#### Scenario: Oversized image
+- **WHEN** `/api/fetch-image` targets a response larger than 50 MB
+- **THEN** the server responds 413 when the size is declared, or aborts the transfer once 50 MB is exceeded
+
+### Requirement: Privacy: no collection of credentials
+The server SHALL NOT collect, store or log visitors' API keys, Base URLs or prompts: it SHALL NOT write them to files, stdout, stderr or any console, and SHALL NOT include them (or the full upstream URL) in its own error messages; credential-bearing text and URLs SHALL be redacted from 502 messages. The only output at startup SHALL be the listening address. Credentials SHALL be used only for the single forwarded upstream request.
+
+#### Scenario: Nothing logged
+- **WHEN** requests are made (success, 502, 400) with a distinctive API key and prompt
+- **THEN** none of the key, prompt or base URL appears in anything written to stdout, stderr or the console
+
+#### Scenario: Errors do not echo secrets
+- **WHEN** the upstream fetch fails with an error whose text contains the API key and the full upstream URL
+- **THEN** the 502 message contains neither
+
+### Requirement: Upstream address restrictions
+`/api/generate` and `/api/fetch-image` SHALL accept only `http:`/`https:` URLs without userinfo (`user:pass@`) and SHALL resolve the hostname and reject with 400 JSON any URL where any resolved address is loopback, private (10/8, 172.16/12, 192.168/16), link-local (169.254/16 including cloud metadata), CGNAT (100.64/10), `0.0.0.0/8`, multicast or reserved, IPv6 `::1`, `fc00::/7`, `fe80::/10`, multicast, or an IPv4-mapped form of those. Setting the environment variable `ALLOW_PRIVATE_UPSTREAM=1` SHALL disable the address check (for local use) but not the userinfo check or the no-redirect rule.
+
+#### Scenario: Internal address blocked
+- **WHEN** Base URL is `http://169.254.169.254`, `http://127.0.0.1`, `http://[::1]` or `http://[::ffff:10.0.0.1]` and `ALLOW_PRIVATE_UPSTREAM` is not set
+- **THEN** the server responds 400 and sends no upstream request
+
+#### Scenario: Hostname resolving to a private address
+- **WHEN** a hostname resolves to at least one private address
+- **THEN** the server responds 400
+
+#### Scenario: Userinfo rejected
+- **WHEN** the URL is `https://user:pass@example.com`
+- **THEN** the server responds 400, with or without `ALLOW_PRIVATE_UPSTREAM`
+
+#### Scenario: Local development
+- **WHEN** `ALLOW_PRIVATE_UPSTREAM=1` and Base URL is `http://127.0.0.1:9000`
+- **THEN** the request is forwarded
 
 ### Requirement: Docker deployment
 The project SHALL include a `Dockerfile`, a `.dockerignore` and a `compose.yaml` so the app runs with `docker compose up -d`. The image SHALL be based on an official Node.js LTS Alpine image, contain only the runtime files (`package.json`, `server.js`, `public/`), run as the non-root `node` user, set `HOST=0.0.0.0` and `PORT=5173`, expose port 5173 and define a HEALTHCHECK that requests `/` and fails on a non-2xx response. `compose.yaml` SHALL publish the port as `127.0.0.1:${PORT:-5173}:5173` and use `restart: unless-stopped`. The image SHALL NOT contain `response.txt`, `test/`, `openspec/`, `.env` files or any API key.

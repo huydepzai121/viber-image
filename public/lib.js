@@ -94,14 +94,22 @@ export function formatElapsed(ms) {
 export function sanitizeSettings(raw) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const str = (value, fallback) => (typeof value === 'string' ? value : fallback);
+  const rememberKey = src.rememberKey === true;
   return {
     baseUrl: str(src.baseUrl, DEFAULT_BASE_URL),
-    apiKey: str(src.apiKey, ''),
+    // A key is only ever restored when the visitor opted in to remembering it.
+    apiKey: rememberKey ? str(src.apiKey, '') : '',
+    rememberKey,
     model: str(src.model, DEFAULT_MODEL),
     prompt: str(src.prompt, ''),
     size: SIZES.includes(src.size) ? src.size : SIZES[0],
     n: Number.isInteger(src.n) && src.n >= 1 && src.n <= 4 ? src.n : 1,
   };
+}
+
+/** Settings as written to localStorage: the API key is dropped unless the visitor opted in. */
+export function settingsForStorage(settings) {
+  return settings.rememberKey ? { ...settings } : { ...settings, apiKey: '' };
 }
 
 /** The JSON body sent upstream. */

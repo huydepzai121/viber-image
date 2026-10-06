@@ -1,7 +1,10 @@
+import dns from 'node:dns/promises';
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { buildEndpoint, buildUpstreamBody } from './public/lib.js';
@@ -11,6 +14,65 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const MAX_BODY_BYTES = 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 180_000;
 const MAX_IMAGES = 4;
+const MAX_FETCH_IMAGE_BYTES = 50 * 1024 * 1024;
+
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' https://fonts.googleapis.com",
+  'font-src https://fonts.gstatic.com',
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': CSP,
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+};
+
+// Addresses an upstream URL must never resolve to (loopback, private, link-local
+// incl. cloud metadata, CGNAT, multicast, reserved). IPv4-mapped IPv6 addresses
+// are matched against the IPv4 rules by net.BlockList.
+const BLOCKED_ADDRESSES = new net.BlockList();
+for (const [network, prefix] of [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+]) BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv4');
+for (const [network, prefix] of [
+  ['::', 96], // unspecified, loopback and deprecated IPv4-compatible
+  ['64:ff9b::', 96], // NAT64 can embed any IPv4 address
+  ['fc00::', 7],
+  ['fe80::', 10],
+  ['ff00::', 8],
+]) BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv6');
+
+export function isBlockedAddress(address) {
+  const bare = String(address).split('%')[0];
+  const family = net.isIP(bare);
+  if (family === 0) return true;
+  try {
+    return BLOCKED_ADDRESSES.check(bare, family === 4 ? 'ipv4' : 'ipv6');
+  } catch {
+    return true;
+  }
+}
+
+class UpstreamBlockedError extends Error {}
+class ImageTooLargeError extends Error {}
 
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -65,10 +127,17 @@ function readBody(req) {
   });
 }
 
-function errorReason(err) {
+// Error text is built from the failure, never from the request: URLs (which may
+// carry credentials) and the API key are redacted before anything reaches a client.
+function errorReason(err, secrets = []) {
   const cause = err && err.cause;
   const parts = [err && err.message, cause && cause.code, cause && cause.message].filter(Boolean);
-  return [...new Set(parts)].join(': ') || 'Không thể kết nối tới máy chủ';
+  let text = [...new Set(parts)].join(': ');
+  for (const secret of secrets) {
+    if (typeof secret === 'string' && secret !== '') text = text.split(secret).join('[đã ẩn]');
+  }
+  text = text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '[url]');
+  return text || 'Không thể kết nối tới máy chủ';
 }
 
 function isHttpUrl(value) {
@@ -80,7 +149,43 @@ function isHttpUrl(value) {
   }
 }
 
-export function createServer({ fetchImpl = fetch } = {}) {
+export function createServer({
+  fetchImpl = fetch,
+  allowPrivateUpstream = process.env.ALLOW_PRIVATE_UPSTREAM === '1',
+  lookup = (host) => dns.lookup(host, { all: true }),
+  maxImageBytes = MAX_FETCH_IMAGE_BYTES,
+} = {}) {
+  // Rejects URLs that could turn this server into a proxy for internal networks.
+  async function assertPublicUpstream(rawUrl) {
+    let parsed;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new UpstreamBlockedError('Địa chỉ upstream không hợp lệ');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new UpstreamBlockedError('Địa chỉ upstream phải bắt đầu bằng http:// hoặc https://');
+    }
+    if (parsed.username || parsed.password) {
+      throw new UpstreamBlockedError('Địa chỉ upstream không được chứa user:password');
+    }
+    if (allowPrivateUpstream) return;
+    const host = parsed.hostname.replace(/^\[|\]$/g, '');
+    let addresses;
+    if (net.isIP(host)) {
+      addresses = [host];
+    } else {
+      try {
+        addresses = (await lookup(host)).map((entry) => entry.address);
+      } catch {
+        throw new UpstreamBlockedError('Không phân giải được tên miền của địa chỉ upstream');
+      }
+    }
+    if (addresses.length === 0 || addresses.some(isBlockedAddress)) {
+      throw new UpstreamBlockedError('Địa chỉ upstream trỏ tới mạng nội bộ hoặc không được phép');
+    }
+  }
+
   async function handleGenerate(req, res) {
     let raw;
     try {
@@ -114,6 +219,12 @@ export function createServer({ fetchImpl = fetch } = {}) {
     if (!isHttpUrl(endpoint)) {
       return sendError(res, 400, 'Base URL phải bắt đầu bằng http:// hoặc https://');
     }
+    try {
+      await assertPublicUpstream(endpoint);
+    } catch (err) {
+      if (err instanceof UpstreamBlockedError) return sendError(res, 400, err.message);
+      throw err;
+    }
 
     // Upstream rejects any n > 1 with 400, so fan out n single-image requests.
     const count = Number.isInteger(n) && n > 1 ? Math.min(n, MAX_IMAGES) : 1;
@@ -127,8 +238,12 @@ export function createServer({ fetchImpl = fetch } = {}) {
             'Content-Type': 'application/json',
           },
           body,
+          redirect: 'manual',
           signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         });
+        if (upstream.status >= 300 && upstream.status < 400) {
+          return { networkError: new Error('Upstream trả về chuyển hướng (HTTP ' + upstream.status + '), không được theo dõi') };
+        }
         return {
           status: upstream.status,
           type: upstream.headers.get('content-type') || 'application/octet-stream',
@@ -141,7 +256,7 @@ export function createServer({ fetchImpl = fetch } = {}) {
     const results = await Promise.all(Array.from({ length: count }, callUpstream));
 
     const failed = results.find((r) => r.networkError);
-    if (failed) return sendError(res, 502, errorReason(failed.networkError));
+    if (failed) return sendError(res, 502, errorReason(failed.networkError, [apiKey.trim(), endpoint]));
 
     const sendRaw = (r) => {
       res.writeHead(r.status, { 'Content-Type': r.type, 'Content-Length': r.buffer.length });
@@ -175,18 +290,41 @@ export function createServer({ fetchImpl = fetch } = {}) {
     if (!target || !isHttpUrl(target)) {
       return sendError(res, 400, 'Tham số url phải là địa chỉ http hoặc https hợp lệ');
     }
+    try {
+      await assertPublicUpstream(target);
+    } catch (err) {
+      if (err instanceof UpstreamBlockedError) return sendError(res, 400, err.message);
+      throw err;
+    }
     let upstream;
     try {
-      upstream = await fetchImpl(target, { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+      upstream = await fetchImpl(target, { redirect: 'manual', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
     } catch (err) {
-      return sendError(res, 502, errorReason(err));
+      return sendError(res, 502, errorReason(err, [target]));
+    }
+    if (upstream.status >= 300 && upstream.status < 400) {
+      upstream.body?.cancel?.().catch(() => {});
+      return sendError(res, 502, 'Máy chủ ảnh trả về chuyển hướng (HTTP ' + upstream.status + '), không được theo dõi');
+    }
+    const declared = Number(upstream.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > maxImageBytes) {
+      upstream.body?.cancel?.().catch(() => {});
+      return sendError(res, 413, 'Ảnh vượt quá giới hạn ' + Math.round(maxImageBytes / 1024 / 1024) + ' MB');
     }
     res.writeHead(upstream.status, {
       'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',
     });
     if (!upstream.body) return res.end();
+    let received = 0;
+    const limiter = new Transform({
+      transform(chunk, _encoding, callback) {
+        received += chunk.length;
+        if (received > maxImageBytes) return callback(new ImageTooLargeError());
+        callback(null, chunk);
+      },
+    });
     try {
-      await pipeline(Readable.fromWeb(upstream.body), res);
+      await pipeline(Readable.fromWeb(upstream.body), limiter, res);
     } catch {
       res.destroy();
     }
@@ -226,6 +364,8 @@ export function createServer({ fetchImpl = fetch } = {}) {
 
   return http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
+    if (url.pathname.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
     const route = async () => {
       if (url.pathname === '/api/generate') {
         if (req.method !== 'POST') {
