@@ -16,6 +16,7 @@ import {
   sanitizeSettings,
   settingsForStorage,
   stripDataUrlPrefix,
+  errorHint,
 } from './lib.js';
 
 const STORAGE_KEY = 'viber-image-settings';
@@ -477,7 +478,7 @@ function showTurnImages(turn) {
   }
 }
 
-function showTurnError(turn, title, body) {
+function showTurnError(turn, title, body, hint = errorHint(0)) {
   const box = makeEl('div', 'turn-error');
   box.setAttribute('role', 'alert');
   const head = makeEl('div', 'error-head');
@@ -487,7 +488,7 @@ function showTurnError(turn, title, body) {
   text.append(
     makeEl('div', 'banner-title', title),
     makeEl('div', 'banner-note', 'Nội dung response từ máy chủ:'),
-    makeEl('div', 'error-hint', 'Kiểm tra API key, Base URL hoặc model rồi thử lại.'),
+    makeEl('div', 'error-hint', hint),
   );
   const copy = makeEl('button', 'copy-btn', 'Sao chép');
   copy.type = 'button';
@@ -646,7 +647,7 @@ function validate() {
 function interpretResponse(response, text, failLabel) {
   const status = `HTTP ${response.status}${response.statusText ? ' ' + response.statusText : ''}`;
   if (!response.ok) {
-    return { error: { title: `${failLabel} thất bại · ${status}`, body: formatErrorBody(text) } };
+    return { error: { title: `${failLabel} thất bại · ${status}`, body: formatErrorBody(text), hint: errorHint(response.status) } };
   }
   let json;
   try {
@@ -721,7 +722,7 @@ async function runTurn(turn, send) {
         : `Đã tạo ${total} ảnh trong ${formatElapsed(elapsed)} giây`);
     } else {
       turn.status = 'error';
-      showTurnError(turn, outcome.error.title, outcome.error.body);
+      showTurnError(turn, outcome.error.title, outcome.error.body, outcome.error.hint);
       announce(outcome.error.title);
     }
   } finally {

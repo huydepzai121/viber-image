@@ -60,6 +60,31 @@ Upstream không trả tiến độ thật, nên phần trăm trên khung chờ c
 1. Chạy server với `HOST=0.0.0.0` (hoặc dùng Docker, trong container `HOST=0.0.0.0` sẵn).
 2. Đặt sau reverse proxy có **HTTPS** (Caddy, nginx, Traefik...). Không mở cổng HTTP thuần ra Internet, vì API key đi qua đường truyền này. Khi đã có reverse proxy, chạy `BIND=127.0.0.1 docker compose up -d` (hoặc ghi `BIND=127.0.0.1` vào file `.env`) để cổng 5173 chỉ mở trong máy, rồi trỏ proxy về `127.0.0.1:5173`.
 3. Không bật log request chứa body ở reverse proxy.
+4. Cho phép body tới 32 MB (chỉnh sửa ảnh và ảnh tham chiếu được gửi dạng base64, tối đa 30 MB) và thời gian chờ đủ lâu (sửa nhiều ảnh có thể mất hơn 2 phút). Nếu không, reverse proxy sẽ trả `413 Request Entity Too Large` hoặc `504`.
+
+Cấu hình nginx mẫu (sau đó chạy `certbot --nginx -d your-domain.com --redirect` để bật HTTPS):
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name your-domain.com;
+
+    client_max_body_size 32m;
+    access_log off;
+
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+    }
+}
+```
 
 ### Chặn địa chỉ nội bộ
 

@@ -188,3 +188,14 @@ export function checkAttachment({ count, totalBytes }, file) {
   }
   return null;
 }
+
+// Suggests what to check for a failed request, based on its HTTP status.
+export function errorHint(status) {
+  if (status === 413) return 'Dữ liệu gửi lên vượt giới hạn của máy chủ hoặc reverse proxy. Dùng ảnh nhỏ hơn hoặc ít ảnh hơn; nếu tự host, tăng giới hạn body (ví dụ nginx client_max_body_size 32m).';
+  if (status === 401 || status === 403) return 'API key không hợp lệ hoặc không có quyền. Kiểm tra lại API key.';
+  if (status === 404) return 'Không tìm thấy endpoint hoặc model. Kiểm tra Base URL và model.';
+  if (status === 429) return 'Bị giới hạn tần suất hoặc hết hạn mức. Chờ một lát rồi thử lại.';
+  if (status === 502 || status === 504) return 'Không kết nối được tới API hoặc API phản hồi quá lâu. Thử lại sau.';
+  if (status >= 500) return 'API gặp lỗi phía máy chủ. Thử lại sau.';
+  return 'Kiểm tra API key, Base URL hoặc model rồi thử lại.';
+}
