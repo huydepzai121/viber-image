@@ -207,3 +207,14 @@ The UI SHALL offer a light and a dark theme with identical layout, each meeting 
 #### Scenario: Persist choice
 - **WHEN** the user switches to dark and reloads the page
 - **THEN** the dark theme is shown regardless of the OS setting
+
+### Requirement: HTTPS deployment
+The project SHALL include `compose.https.yaml`, used together with `compose.yaml`, that runs a Caddy reverse proxy terminating TLS for the domain given in the `DOMAIN` environment variable, publishes ports 80 and 443, forwards to the app over the Compose network, and does not publish the app's port 5173. The domain SHALL NOT be hard-coded in the repository; starting without `DOMAIN` SHALL fail with an explanatory message.
+
+#### Scenario: HTTPS on a domain
+- **WHEN** DNS for `DOMAIN` points to the server and the user runs `docker compose -f compose.yaml -f compose.https.yaml up -d --build`
+- **THEN** `https://<DOMAIN>` serves the app with a valid certificate and `http://<DOMAIN>` redirects to HTTPS
+
+#### Scenario: Missing domain
+- **WHEN** `DOMAIN` is unset
+- **THEN** `docker compose` refuses to start and names the missing variable

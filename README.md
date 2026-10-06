@@ -67,3 +67,17 @@ Mở http://localhost:5173. Đổi cổng trên máy host bằng `PORT=8080 dock
 - Có `HEALTHCHECK` gọi `/`; xem trạng thái bằng `docker compose ps`.
 - Không có API key hay file `.env` nào trong image; bạn nhập key trên giao diện.
 - Dừng và xoá: `docker compose down`.
+
+### HTTPS với tên miền (Caddy)
+
+Trỏ bản ghi DNS `A` của tên miền về IP server, mở cổng 80 và 443 (TCP, và UDP 443 cho HTTP/3) ở firewall/security group, rồi chạy:
+
+```bash
+echo "DOMAIN=your-domain.com" > .env
+docker compose -f compose.yaml -f compose.https.yaml up -d --build
+```
+
+- Caddy tự lấy và gia hạn chứng chỉ Let's Encrypt, chuyển HTTP sang HTTPS và chuyển tiếp tới app. Chứng chỉ lưu trong volume `caddy_data`.
+- Ở chế độ này app không publish cổng 5173 ra ngoài; chỉ Caddy truy cập được nó qua mạng nội bộ của Docker. Có thể đóng cổng 5173 ở firewall.
+- Xem log: `docker compose -f compose.yaml -f compose.https.yaml logs -f caddy`.
+- Caddy không ghi log nội dung request, nên API key không xuất hiện trong log.
