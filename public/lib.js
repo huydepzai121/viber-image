@@ -144,15 +144,16 @@ export function sanitizeSettings(raw) {
     apiKey: rememberKey ? str(src.apiKey, '') : '',
     rememberKey,
     model: str(src.model, DEFAULT_MODEL),
-    prompt: str(src.prompt, ''),
+    // The prompt is per-session: each page load starts with an empty field.
+    prompt: '',
     size: SIZES.includes(src.size) ? src.size : SIZES[0],
     n: Number.isInteger(src.n) && src.n >= 1 && src.n <= 4 ? src.n : 1,
   };
 }
 
-/** Settings as written to localStorage: the API key is dropped unless the visitor opted in. */
-export function settingsForStorage(settings) {
-  return settings.rememberKey ? { ...settings } : { ...settings, apiKey: '' };
+/** Settings as written to localStorage: the prompt is never kept, the API key only when the visitor opted in. */
+export function settingsForStorage({ prompt, ...settings }) {
+  return settings.rememberKey ? settings : { ...settings, apiKey: '' };
 }
 
 /** The JSON body sent upstream. */

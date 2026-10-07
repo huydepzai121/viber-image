@@ -25,11 +25,15 @@ The UI SHALL provide inputs for Base URL, API key and model. Base URL SHALL defa
 - **THEN** the key input switches between masked and plain text and the button's accessible label switches between "Hiện API key" and "Ẩn API key"
 
 ### Requirement: Settings persistence
-The app SHALL persist Base URL, model, prompt, size, n and the "remember key" choice in browser localStorage on change and restore them on load. The API key SHALL be written to localStorage only while the checkbox "Ghi nhớ API key trên trình duyệt này" (default unchecked, shown under the API key field) is checked; otherwise the key SHALL stay in memory only and any key previously stored SHALL be removed from localStorage on load and when the box is unchecked. A visible note "Key chỉ được gửi tới API qua máy chủ này, không được lưu hay ghi log." SHALL appear under the key field. If storage is unavailable or holds invalid values, the app SHALL use defaults without failing.
+The app SHALL persist Base URL, model, size, n and the "remember key" choice in browser localStorage on change and restore them on load. The prompt SHALL NOT be written to localStorage, and the prompt field SHALL be empty on every page load. The API key SHALL be written to localStorage only while the checkbox "Ghi nhớ API key trên trình duyệt này" (default unchecked, shown under the API key field) is checked; otherwise the key SHALL stay in memory only and any key previously stored SHALL be removed from localStorage on load and when the box is unchecked. A visible note "Key chỉ được gửi tới API qua máy chủ này, không được lưu hay ghi log." SHALL appear under the key field. If storage is unavailable or holds invalid values, the app SHALL use defaults without failing.
 
 #### Scenario: Restore after reload
 - **WHEN** the user changes model to `x-model` and reloads the page
 - **THEN** the model input shows `x-model`
+
+#### Scenario: Prompt cleared on reload
+- **WHEN** the user types a prompt and reloads the page
+- **THEN** the prompt field is empty and localStorage contains no prompt
 
 #### Scenario: Corrupt stored value
 - **WHEN** localStorage holds a non-JSON or out-of-range value (e.g. n = 9)

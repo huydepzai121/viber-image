@@ -118,7 +118,7 @@ test('sanitizeSettings falls back per field', () => {
   assert.equal(s.n, 1);
   assert.equal(s.size, '1024x1024');
   assert.equal(s.apiKey, '');
-  assert.equal(s.prompt, 'cat');
+  assert.equal(s.prompt, ''); // a stored prompt is never restored on load
   assert.equal(sanitizeSettings({ n: 4, size: 'auto' }).n, 4);
   assert.equal(sanitizeSettings({ n: '2' }).n, 1);
   assert.equal(sanitizeSettings([1, 2]).n, 1);
@@ -146,4 +146,9 @@ test('settingsForStorage drops the API key unless the visitor opted in', () => {
   assert.equal(JSON.stringify(settingsForStorage({ ...base, rememberKey: false })).includes('sk-secret'), false);
   assert.equal(settingsForStorage({ ...base, rememberKey: true }).apiKey, 'sk-secret');
   assert.equal(base.apiKey, 'sk-secret'); // input is not mutated
+});
+
+test('settingsForStorage never writes the prompt', () => {
+  const stored = settingsForStorage({ baseUrl: 'u', apiKey: '', rememberKey: false, model: 'm', prompt: 'secret cat', size: 'auto', n: 2 });
+  assert.equal('prompt' in stored, false);
 });
